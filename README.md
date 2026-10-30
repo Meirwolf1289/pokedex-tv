@@ -9,6 +9,10 @@ Pokémon appears as the screensaver. One HTML file, no framework, built for a TV
 Runs on Samsung (Tizen 2017+), LG (webOS) and Android TV / Google TV. It is an app you open (TVs do not let anything
 replace their home screen); on Android TV it offers itself as the home app.
 
+![Demo](docs/video/pokedex-tv-demo.gif)
+
+30-second demo as [mp4](docs/video/pokedex-tv-demo.mp4). Recorded in a desktop browser; the TV build is flatter (see TV mode in the file).
+
 ![Home](docs/home.png)
 
 ## What is on it
