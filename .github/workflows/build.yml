@@ -4,6 +4,8 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+permissions:
+  contents: write   # the Release step uploads the packages
 jobs:
   build:
     runs-on: ubuntu-latest
