@@ -1,0 +1,15 @@
+{
+  "id": "tv.hush.pokedex",
+  "version": "0.1.0",
+  "vendor": "Hush",
+  "type": "web",
+  "main": "index.html",
+  "title": "Pokédex",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "iconColor": "#1c1c22",
+  "resolution": "1920x1080",
+  "handlesRelaunch": true,
+  "disableBackHistoryAPI": true,
+  "requiredPermissions": ["applications", "applications.launcher"]
+}

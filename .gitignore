@@ -1,0 +1,6 @@
+out/
+Pokedex-tizen.wgt
+Pokedex-webos.ipk
+Pokedex.apk
+tizen/certs/
+config.local.json

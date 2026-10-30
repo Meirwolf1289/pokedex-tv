@@ -1,0 +1,36 @@
+name: Build the three packages
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: Android SDK pieces
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" >/dev/null
+      - name: Samsung (.wgt, signed with the Tizen SDK public test certificate), LG (.ipk), Android (.apk)
+        run: |
+          pip install --quiet cryptography lxml
+          python3 tizen/build.py && python3 tizen/sign.py
+          python3 webos/build.py
+          bash android/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pokedex-packages
+          path: |
+            Pokedex-tizen.wgt
+            Pokedex-webos.ipk
+            Pokedex.apk
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Pokedex-tizen.wgt
+            Pokedex-webos.ipk
+            Pokedex.apk

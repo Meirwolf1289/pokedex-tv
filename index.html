@@ -1,0 +1,1089 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pokédex</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  /* Laid out on a 1920x1080 canvas (tvOS points @1x, safe area 90/60) and scaled to the screen. */
+  :root {
+    --icon-w: 256px; --icon-h: 154px; --gap: 40px; --radius: 14px;
+    --ink: #fff; --ink-2: rgba(255,255,255,.62); --ink-3: rgba(255,255,255,.4);
+    --tint: #335;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: #000; }
+  body {
+    font-family: Nunito, -apple-system, "Helvetica Neue", Roboto, system-ui, sans-serif; font-feature-settings: "tnum";
+    color: var(--ink); -webkit-font-smoothing: antialiased; user-select: none; cursor: none;
+  }
+  .stage {
+    position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px;
+    transform: translate(-50%, -50%) scale(var(--scale, 1)); transform-origin: center; overflow: hidden;
+  }
+
+  /* Background: near-black, with a wash from the focused app capped at 12%. */
+  .bg { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: linear-gradient(180deg, #0b0b10 0%, #15161c 100%); }
+  .bg video { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 1.5s; filter: brightness(.45) saturate(1.1); }
+  .bg video.on { opacity: 1; }
+  body.idle .bg video { filter: none; }
+  .bg .wash {
+    position: absolute; top: -20%; right: -20%; bottom: -20%; left: -20%; opacity: .12; filter: blur(80px);
+    background: radial-gradient(50% 45% at 50% 30%, var(--tint) 0%, transparent 70%);
+  }
+
+  /* Top bar: Liquid Glass strip, small clock and avatar on the right. */
+  .topbar {
+    position: absolute; left: 90px; right: 90px; top: 28px; height: 52px; z-index: 5;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .topbar .greet { font-size: 34px; font-weight: 600; letter-spacing: -.02em; margin-right: auto; text-shadow: 0 2px 20px rgba(0,0,0,.5); }
+  .pill {
+    height: 52px; min-width: 52px; padding: 0 20px; border-radius: 26px; display: flex; align-items: center; gap: 10px;
+    font-size: 24px; font-weight: 500; color: rgba(255,255,255,.9); font-variant-numeric: tabular-nums;
+    background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.18);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4); backdrop-filter: blur(24px) saturate(1.4);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.35); position: relative; overflow: hidden;
+    transition: transform .18s ease-out, background .18s, box-shadow .18s;
+  }
+  .pill svg { width: 26px; height: 26px; fill: currentColor; }
+  .pill.is-focused { transform: scale(1.08); background: rgba(255,255,255,.22); box-shadow: 0 16px 32px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.5); }
+  .pill.off { color: rgba(255,255,255,.45); }
+  /* Clock panel: full time and date under the clock pill. */
+  .clockpanel {
+    position: absolute; right: 90px; top: 96px; width: 460px; padding: 30px 36px; border-radius: 28px; z-index: 6;
+    background: rgba(28,28,30,.6); border: 1px solid rgba(255,255,255,.16);
+    -webkit-backdrop-filter: blur(40px) saturate(1.4); backdrop-filter: blur(40px) saturate(1.4);
+    box-shadow: 0 30px 80px rgba(0,0,0,.55); opacity: 0; transform: translateY(-8px); pointer-events: none; transition: opacity .2s, transform .2s;
+  }
+  body.clock-open .clockpanel { opacity: 1; transform: none; }
+  .clockpanel .big { font-size: 96px; font-weight: 300; letter-spacing: -.03em; line-height: 1; }
+  .clockpanel .small { font-size: 26px; color: var(--ink-2); margin-top: 10px; }
+  /* Shine sweep: one diagonal pass when focus lands. */
+  .sweep::before {
+    content: ""; position: absolute; top: -50%; bottom: -50%; left: -60%; width: 40%; pointer-events: none;
+    background: linear-gradient(100deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.35) 50%, rgba(255,255,255,0) 100%);
+    transform: translateX(-100%) skewX(-12deg); animation: sweep .55s ease-out 1;
+  }
+  @keyframes sweep { to { transform: translateX(450%) skewX(-12deg) } }
+  .saver .where { position: absolute; left: 90px; bottom: 60px; font-size: 36px; font-weight: 500; text-shadow: 0 2px 20px rgba(0,0,0,.6); }
+
+  /* Top shelf: the focused dock app's content, upper half of the screen. */
+  .shelf { position: absolute; left: 90px; right: 90px; top: 100px; height: 560px; transition: opacity .3s; }
+  .shelf .art {
+    position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: 28px; overflow: hidden;
+    background: linear-gradient(120deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.7) 100%), var(--tint);
+    box-shadow: 0 30px 80px rgba(0,0,0,.5); transition: background .6s;
+  }
+  .shelf .art::before { content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: radial-gradient(45% 80% at 80% 15%, rgba(255,255,255,.28), transparent 60%); }
+  .shelf .art svg { position: absolute; right: 70px; bottom: -70px; width: 420px; height: 420px; fill: rgba(255,255,255,.16); }
+  .shelf .copy { position: absolute; left: 60px; bottom: 54px; }
+  .shelf h1 { font-size: 64px; font-weight: 700; letter-spacing: -.02em; text-shadow: 0 2px 30px rgba(0,0,0,.5); }
+  .shelf p  { font-size: 28px; color: var(--ink-2); margin-top: 8px; }
+  body.scrolled .shelf { opacity: 0; }
+  /* TMDB carousel: two stacked backdrops cross-fade; the copy sits on a bottom gradient. */
+  .shelf .slides { position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: 28px; overflow: hidden; display: none; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+  body.has-slides .shelf .slides { display: block; }
+  body.has-slides .shelf .art { opacity: 1; }
+  body.has-slides .shelf .art .copy, body.has-slides .shelf .art svg { display: none; }
+  .shelf .slides { z-index: 1; } .shelf .art .mon { z-index: 2; pointer-events: none; } .shelf .art .badge { z-index: 2; }
+  .shelf .slides > img { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .5s ease; }
+  .shelf .slides > img.on { opacity: 1; }
+  .shelf .slides .fade { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: linear-gradient(180deg, rgba(0,0,0,0) 35%, rgba(0,0,0,.75) 100%); }
+  .shelf .slides .copy { bottom: 44px; max-width: 1100px; }
+  .shelf .slides .meta { font-size: 24px; color: var(--ink-2); margin-top: 10px; display: flex; gap: 18px; }
+  .shelf .slides .meta .star { color: #ffd60a; }
+  .shelf .dots { position: absolute; right: 50px; bottom: 44px; display: flex; gap: 10px; }
+  .shelf .dots i { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,.35); transition: background .3s, transform .3s; }
+  .shelf .dots i.on { background: #fff; transform: scale(1.3); }
+  .shelf .slides .cta {
+    position: absolute; right: 50px; top: 40px; padding: 14px 26px; border-radius: 999px; font-size: 24px; font-weight: 600;
+    background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.22); opacity: 0; transition: opacity .2s;
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  }
+  body.zone-shelf .shelf .slides .cta { opacity: 1; }
+  body.zone-shelf .shelf .slides { box-shadow: 0 24px 48px rgba(0,0,0,.55), 0 0 0 4px rgba(255,255,255,.9); }
+  .shelf .note { position: absolute; left: 60px; bottom: 54px; font-size: 26px; color: var(--ink-3); display: none; max-width: 1200px; line-height: 1.4; }
+  body.has-note .shelf .note { display: block; }
+  body.has-note .shelf .art .copy { display: none; }
+
+  /* Settings: one glass sheet with the TMDB key and the region. */
+  .sheet {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.96); width: 900px; padding: 48px 56px;
+    border-radius: 32px; background: rgba(28,28,30,.72); border: 1px solid rgba(255,255,255,.16);
+    -webkit-backdrop-filter: blur(40px) saturate(1.4); backdrop-filter: blur(40px) saturate(1.4);
+    box-shadow: 0 40px 120px rgba(0,0,0,.6); opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s; z-index: 8;
+  }
+  body.settings .sheet { opacity: 1; transform: translate(-50%, -50%) scale(1); pointer-events: auto; }
+  .sheet h2 { font-size: 40px; font-weight: 700; letter-spacing: -.02em; }
+  .sheet p { font-size: 24px; color: var(--ink-2); margin-top: 10px; line-height: 1.4; }
+  .sheet label { display: block; margin-top: 32px; font-size: 22px; color: var(--ink-2); }
+  .sheet input {
+    display: block; width: 100%; margin-top: 10px; height: 64px; padding: 0 22px; border-radius: 16px; font: inherit; font-size: 26px; color: #fff;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16); outline: 0;
+  }
+  .sheet input:focus { background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.6); }
+  .sheet .foot { margin-top: 28px; font-size: 22px; color: var(--ink-3); }
+
+  /* Rows: the dock (row 1) and the rest. */
+  .rows { position: absolute; left: 90px; right: 90px; top: 720px; transition: transform .5s cubic-bezier(.2,.8,.2,1); }
+  body.scrolled .rows { transform: translateY(-620px); }
+  .row { display: flex; gap: var(--gap); margin-bottom: 86px; position: relative; }
+  /* Dock edge: the Liquid Glass hairline tvOS 26 added. */
+  .row.dock::before {
+    content: ""; position: absolute; top: -22px; right: -26px; bottom: -22px; left: -26px; border-radius: 30px; pointer-events: none;
+    background: linear-gradient(180deg, rgba(255,255,255,.09) 0%, rgba(255,255,255,.04) 100%);
+    border: 1px solid rgba(255,255,255,.12); border-top-color: rgba(255,255,255,.4);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4); backdrop-filter: blur(24px) saturate(1.4);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 20px 50px rgba(0,0,0,.35);
+  }
+
+  .icon {
+    position: relative; width: var(--icon-w); height: var(--icon-h);
+    border-radius: var(--radius); transform-style: preserve-3d;
+    transition: transform .22s ease-out, box-shadow .22s ease-out;
+    box-shadow: 0 4px 12px rgba(0,0,0,.35);
+  }
+  .icon .clip { position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: inherit; overflow: hidden; }
+  .icon .layer { position: absolute; top: -6%; right: -6%; bottom: -6%; left: -6%; display: grid; place-items: center; transition: transform .22s ease-out; }
+  .icon .layer.back { background: var(--bg); }
+  .icon .layer.back::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: linear-gradient(110deg, rgba(255,255,255,.12) 0%, transparent 45%, rgba(0,0,0,.18) 100%); }
+  .icon .layer.front svg { width: 96px; height: 96px; fill: #fff; filter: drop-shadow(0 6px 10px rgba(0,0,0,.25)); }
+  .icon .word { font-size: 46px; font-weight: 800; letter-spacing: -.03em; color: #fff; }
+  .icon .shine { position: absolute; top: 0; right: 0; bottom: 0; left: 0; opacity: 0; transition: opacity .18s;
+    background: radial-gradient(60% 60% at calc(50% + var(--ty, 0) * 4%) calc(30% - var(--tx, 0) * 4%), rgba(255,255,255,.18), transparent 70%); }
+  .icon .edge { position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity .18s;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 0 0 1px rgba(255,255,255,.12); }
+  .icon .label {
+    position: absolute; top: 100%; left: -40px; right: -40px; text-align: center; margin-top: 12px;
+    font-size: 30px; font-weight: 500; color: rgba(255,255,255,.9); opacity: 0; transform: translateY(4px);
+    transition: opacity .15s, transform .15s;
+  }
+  .icon.is-focused {
+    transform: scale(1.10) rotateX(calc(var(--tx, 0) * 1deg)) rotateY(calc(var(--ty, 0) * 1deg));
+    box-shadow: 0 24px 48px rgba(0,0,0,.55); z-index: 2;
+  }
+  .icon.is-focused .shine, .icon.is-focused .edge { opacity: 1; }
+  .icon.is-focused .label { opacity: 1; transform: none; }
+  /* Parallax: back 0, front 8px against the tilt, front +2%. */
+  .icon.is-focused .layer.front { transform: translate(calc(var(--ty, 0) * -1.33px), calc(var(--tx, 0) * 1.33px)) scale(1.02); }
+  /* Idle sway after 1.5 s without input. */
+  .icon.is-focused.sway { animation: sway 6s ease-in-out infinite; }
+  @keyframes sway {
+    0%   { transform: scale(1.10) rotateX(0deg)  rotateY(-2deg) }
+    25%  { transform: scale(1.10) rotateX(2deg)  rotateY(0deg) }
+    50%  { transform: scale(1.10) rotateX(0deg)  rotateY(2deg) }
+    75%  { transform: scale(1.10) rotateX(-2deg) rotateY(0deg) }
+    100% { transform: scale(1.10) rotateX(0deg)  rotateY(-2deg) }
+  }
+  .icon.pressed { transform: scale(.96) !important; transition-duration: .12s; }
+  body.arranging .icon.is-focused { animation: jiggle .3s ease-in-out infinite alternate; }
+  @keyframes jiggle { from { transform: scale(1.10) rotate(-1.2deg) } to { transform: scale(1.10) rotate(1.2deg) } }
+
+  /* Idle: the clock screensaver (Portraits-style). */
+  .saver { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: grid; place-content: center; text-align: center; z-index: 9;
+    background: radial-gradient(80% 70% at 50% 100%, #1b2550 0%, #05060f 70%); opacity: 0; pointer-events: none; transition: opacity 1.2s; }
+  body.idle.video .saver { background: none; }
+  body.idle.video .saver .time, body.idle.video .saver .date { display: none; }
+  body.idle .stage > :not(.bg):not(.saver) { opacity: 0; transition: opacity 1s; }
+  body.idle .saver { opacity: 1; }
+  .saver .time { font-size: 300px; font-weight: 200; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .saver .date { margin-top: 20px; font-size: 36px; color: var(--ink-2); }
+
+  .hint { position: absolute; bottom: 24px; left: 0; right: 0; text-align: center; color: var(--ink-3); font-size: 28px; opacity: 0; transition: opacity .3s; }
+  body.arranging .hint { opacity: 1; }
+  /* TV mode: the TV's web runtime is a small GPU. No backdrop blur, no filter on the video, no perpetual motion;
+     the aerials play only as the screensaver, the home sits on a flat gradient. */
+  body.tv .bg video { filter: none; opacity: 0; }
+  body.tv.idle .bg video.on { opacity: 1; }
+  body.tv .bg .wash { filter: none; opacity: .18; }
+  body.tv .topbar .pill, body.tv .row.dock::before, body.tv .sheet, body.tv .clockpanel, body.tv .slides .cta {
+    -webkit-backdrop-filter: none; backdrop-filter: none; }
+  body.tv .pill { background: rgba(60,60,66,.75); }
+  body.tv .row.dock::before { background: rgba(255,255,255,.06); box-shadow: none; }
+  body.tv .sheet, body.tv .clockpanel { background: rgba(28,28,30,.96); }
+  body.tv .icon.is-focused.sway { animation: none; }
+  body.tv .icon { box-shadow: none; }
+  body.tv .icon.is-focused { box-shadow: 0 16px 32px rgba(0,0,0,.5); }
+  body.tv .shelf .art, body.tv .shelf .slides { box-shadow: none; }
+  body.tv .sweep::before { animation: none; }
+  /* Flat and 2D on a TV: one short transform transition, nothing else animates (shadows, backgrounds, layers). */
+  body.tv .icon { transform-style: flat; transition: transform .15s ease-out; will-change: transform; box-shadow: none; }
+  body.tv .icon.is-focused { transform: scale(1.1); box-shadow: none; outline: 4px solid rgba(255,255,255,.9); outline-offset: 0; }
+  body.tv .icon .layer, body.tv .icon .shine, body.tv .icon .edge, body.tv .icon .label { transition: none; }
+  body.tv .icon.is-focused .layer.front { transform: none; }
+  body.tv .icon .layer.back::after { display: none; }
+  body.tv .icon .shine { display: none; }
+  body.tv .icon .layer.front svg { filter: none; }
+  body.tv .rows { transition: transform .2s ease-out; will-change: transform; }
+  body.tv .shelf, body.tv .shelf .art, body.tv .shelf .slides img, body.tv .pill, body.tv .pick { transition: none; }
+  body.tv .shelf .art::before { display: none; }
+  body.tv .shelf h1, body.tv .topbar .greet, body.tv .saver .where { text-shadow: none; }
+  body.tv .bg .wash { display: none; }
+  body.tv .stage { will-change: auto; }
+  @media (prefers-reduced-motion: reduce) { .icon, .rows, .shelf, .layer { transition: none } .icon.is-focused.sway, body.arranging .icon.is-focused { animation: none } }
+</style>
+
+<style id="pokedex">
+  /* ---- Partner skin: every app has a Pokémon partner. Bright, rounded, flat — it runs on a TV GPU. */
+  :root { --ink: #fff; --ink-2: rgba(255,255,255,.72); --ink-3: rgba(255,255,255,.5); --type: #78c850; --night: #121a3d; }
+  body { color: var(--ink); }
+  /* dusk: dark enough for white type on a TV, with the GO neon at the horizon */
+  .bg { background: linear-gradient(180deg, #0f1636 0%, #1d2460 45%, #4b2a8a 80%, #c75d9c 100%); }
+  .bg .wash { display: none; }
+  .bg .blob { position: absolute; border-radius: 50%; background: rgba(120,160,255,.14); }
+  .bg .blob.a { width: 1100px; height: 1100px; left: -400px; top: -600px; }
+  .bg .blob.b { width: 800px; height: 800px; right: -300px; top: 200px; background: rgba(255,120,200,.12); }
+  .bg .blob.c { width: 520px; height: 520px; left: 38%; bottom: -300px; background: rgba(255,200,120,.12); }
+  .topbar { left: 90px; right: 90px; top: 30px; }
+  .topbar .mark { display: flex; align-items: center; gap: 14px; margin-right: 26px; font-size: 26px; font-weight: 900; letter-spacing: .02em; color: #fff; }
+  .topbar .mark .ball { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(180deg, #ff3b4a 0 46%, #15172b 46% 54%, #fff 54%); position: relative; box-shadow: 0 0 0 3px #15172b; }
+  .topbar .mark .ball::after { content: ""; position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px #15172b; }
+  .topbar .greet { font-size: 30px; font-weight: 700; color: var(--ink-2); margin-right: auto; }
+  .pill { border-radius: 999px; border: 0; background: rgba(255,255,255,.14); color: #fff; box-shadow: none; font-weight: 800; }
+  .pill.is-focused { background: #fff; color: var(--night); transform: scale(1.08); box-shadow: 0 10px 24px rgba(0,0,0,.3); }
+  .clockpanel { border-radius: 28px; border: 0; background: #fff; color: var(--night); box-shadow: 0 20px 50px rgba(0,0,0,.35); }
+  .clockpanel .big { font-weight: 900; } .clockpanel .small { color: rgba(18,26,61,.65); }
+  /* the Top Shelf: the partner card */
+  .shelf { left: 90px; right: 90px; top: 120px; height: 560px; }
+  .shelf .art, .shelf .slides { border-radius: 40px; border: 0; box-shadow: 0 24px 60px rgba(0,0,0,.18);
+    background: linear-gradient(135deg, rgba(255,255,255,.42) 0%, rgba(255,255,255,0) 55%, rgba(0,0,0,.18) 100%), var(--type); }
+  .shelf .art::before { display: none; }
+  .shelf .art svg { display: none; }
+  .shelf .mon { position: absolute; right: 80px; bottom: -30px; width: 560px; height: 560px; object-fit: contain; }
+  .shelf .mon-ring { position: absolute; right: 120px; top: 40px; width: 480px; height: 480px; border-radius: 50%; background: rgba(255,255,255,.35); }
+  .shelf .copy { left: 70px; bottom: 70px; }
+  .shelf h1 { font-size: 92px; font-weight: 900; letter-spacing: -.03em; color: #fff; text-shadow: 0 4px 0 rgba(0,0,0,.12); line-height: 1; }
+  .shelf p { font-size: 30px; font-weight: 700; color: rgba(255,255,255,.9); margin-top: 14px; }
+  .shelf .badge { position: absolute; left: 70px; top: 60px; display: flex; gap: 14px; align-items: center; }
+  .shelf .badge b { background: rgba(255,255,255,.9); color: var(--night); padding: 12px 22px; border-radius: 999px; font-weight: 900; font-size: 22px; letter-spacing: .06em; }
+  .shelf .badge .hp { font-size: 22px; font-weight: 800; color: #fff; background: rgba(0,0,0,.18); padding: 12px 22px; border-radius: 999px; }
+  .shelf .badge .partner { font-size: 22px; font-weight: 800; color: rgba(255,255,255,.95); }
+  .shelf .note { color: #fff; font-weight: 700; font-size: 26px; left: 70px; bottom: 70px; max-width: 1000px; }
+  .shelf .slides .copy h1 { font-size: 64px; }
+  .shelf .slides .meta { color: rgba(255,255,255,.9); font-weight: 700; } .shelf .slides .meta .star { color: #ffd60a; }
+  .shelf .slides .cta { border: 0; background: #fff; color: var(--night); font-weight: 900; }
+  /* what is on: the picked title on the left, five posters on the right, the partner as a small avatar */
+  .shelf .posters { position: absolute; right: 70px; top: 190px; height: 270px; display: flex; gap: 24px; align-items: flex-start; }
+  .shelf .poster { flex: none; width: 180px; height: 270px; margin: 0; position: relative; border-radius: 16px; background: rgba(0,0,0,.25); box-shadow: 0 10px 24px rgba(0,0,0,.35); transition: transform .2s ease-out, box-shadow .2s; }
+  .shelf .poster img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 16px; display: block; }
+  .shelf .poster figcaption { display: none; }
+  .shelf .poster.on { transform: translateY(-16px) scale(1.06); z-index: 2; box-shadow: 0 18px 40px rgba(0,0,0,.5), 0 0 0 5px #fff; }
+  .shelf .dots { display: none; }
+  body.has-slides .shelf .copy { left: 70px; right: auto; top: 150px; bottom: auto; width: 560px; }
+  body.has-slides .shelf h1 { font-size: 46px; line-height: 1.1; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  body.has-slides .shelf .slides .meta { font-size: 22px; margin-top: 12px; }
+  body.has-slides .shelf .slides .meta span { background: rgba(0,0,0,.22); padding: 6px 14px; border-radius: 999px; }
+  .shelf .slides .cta { top: auto; bottom: 60px; left: 70px; right: auto; opacity: 1; padding: 16px 30px; font-size: 24px; }
+  .shelf .slides .cta::before { content: "\25B6"; font-size: 16px; margin-right: 12px; }
+  body.zone-shelf .shelf .slides .cta { box-shadow: 0 0 0 4px rgba(255,255,255,.5); }
+  body.has-slides .shelf .mon { width: 150px; height: 150px; right: 70px; bottom: auto; top: 20px; opacity: 1; animation: none; }
+  body.has-slides .shelf .mon-ring { display: block; width: 130px; height: 130px; right: 80px; top: 30px; background: rgba(255,255,255,.3); }
+  body.has-slides .shelf .slides { background: linear-gradient(100deg, rgba(0,0,0,.28) 0%, rgba(0,0,0,0) 45%, rgba(255,255,255,.18) 100%), var(--type); }
+  body.has-slides .shelf .badge .hp { display: none; }
+  body.tv .shelf .poster { transition: none; }
+  /* the partner lands on the card with one short bounce */
+  .shelf .mon { animation: land .45s cubic-bezier(.2,.8,.2,1) 1; }
+  @keyframes land { from { transform: translateY(40px) scale(.92); opacity: 0 } to { transform: none; opacity: 1 } }
+  /* the grid: partner tiles — the app's colour, the Pokémon peeking in, the logo as a small badge */
+  .rows { top: 720px; }
+  .row.dock::before { border-radius: 40px; background: rgba(255,255,255,.08); border: 0; box-shadow: none; }
+  .icon { border-radius: 30px; box-shadow: 0 8px 20px rgba(0,0,0,.25); }
+  .icon .layer.back::after { background: linear-gradient(160deg, rgba(255,255,255,.35) 0%, rgba(255,255,255,0) 60%); }
+  .icon .layer.front { place-items: end start; padding: 0 0 18px 18px; }
+  .icon .layer.front svg { width: 44px; height: 44px; filter: none; }
+  .icon .layer.front .appicon { width: 54px; height: 54px; border-radius: 14px; object-fit: cover; background: rgba(0,0,0,.25); }
+  .icon .word { font-size: 26px; }
+  .icon .mon { position: absolute; right: -10px; bottom: -8px; width: 150px; height: 150px; object-fit: contain; transition: transform .2s ease-out; }
+  .icon.is-focused { transform: scale(1.12); box-shadow: 0 18px 36px rgba(0,0,0,.22), 0 0 0 6px #fff; outline: none; }
+  .icon.is-focused .mon { animation: hop .4s cubic-bezier(.2,.8,.2,1) 1; transform: translateY(-14px) scale(1.12); }
+  @keyframes hop { 0% { transform: translateY(0) scale(1) } 55% { transform: translateY(-26px) scale(1.14) } 100% { transform: translateY(-14px) scale(1.12) } }
+  .icon .label { font-size: 26px; font-weight: 800; color: #fff; text-shadow: 0 2px 0 rgba(0,0,0,.15); }
+  .icon .edge, .icon .shine { display: none; }
+  .sheet { border-radius: 36px; border: 0; background: #fff; color: var(--night); box-shadow: 0 30px 80px rgba(0,0,0,.4); }
+  .sheet p, .sheet label, .sheet .foot { color: rgba(18,26,61,.65); }
+  .sheet input { background: #f1f1f6; border: 2px solid #e2e2ea; color: var(--night); }
+  .sheet input:focus { background: #fff; border-color: var(--night); }
+  .hint { color: #fff; font-weight: 800; }
+  /* the screensaver: a wild encounter, same language */
+  .saver, body.idle.video .saver { background: linear-gradient(180deg, #0f1636 0%, #2a2a7a 55%, #c75d9c 100%); }
+  .saver .time, .saver .date, .saver .where { display: none !important; }
+  .wild { position: absolute; left: 0; right: 0; top: 0; bottom: 0; }
+  .wild .ring { position: absolute; left: 50%; top: 50%; width: 700px; height: 700px; margin: -400px 0 0 -350px; border-radius: 50%; background: rgba(255,255,255,.16); }
+  .wild img { position: absolute; left: 50%; top: 50%; width: 620px; height: 620px; transform: translate(-50%, -62%); }
+  .wild .box { position: absolute; left: 50%; bottom: 90px; transform: translateX(-50%); background: #fff; color: var(--night); border-radius: 999px; padding: 26px 48px;
+    font-size: 40px; font-weight: 900; box-shadow: 0 20px 50px rgba(0,0,0,.18); white-space: nowrap; text-align: center; }
+  .wild .box small { display: block; font-size: 20px; font-weight: 700; color: rgba(18,26,61,.65); margin-top: 6px; }
+  .wild .dex { position: absolute; right: 90px; top: 50px; font-size: 26px; font-weight: 900; color: #fff; background: rgba(255,255,255,.14); padding: 14px 24px; border-radius: 999px; }
+  body.tv .shelf .mon, body.tv .icon.is-focused .mon { animation: none; }
+  /* the news / markets panel in the shelf: a few big headlines, source and age under each; quotes as pills */
+  .panel { position: absolute; left: 70px; right: 600px; top: 118px; bottom: 44px; display: none; color: #fff; overflow: hidden; }
+  body.has-panel .panel { display: block; }
+  body.has-panel .shelf .copy, body.has-panel .shelf .note { display: none; }
+  .panel h2 { display: none; }
+  .panel ol { list-style: none; display: flex; flex-direction: column; gap: 9px; }
+  .panel li { display: flex; align-items: center; gap: 22px; padding: 12px 22px; border-radius: 20px; background: rgba(0,0,0,.22); }
+  .panel li .n { flex: none; width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.9); color: var(--night); font-weight: 900; font-size: 20px; display: grid; place-items: center; }
+  .panel li .t { min-width: 0; flex: 1; }
+  .panel li .t b { display: block; font-size: 26px; font-weight: 800; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
+  .panel li .t small { display: block; margin-top: 4px; font-size: 17px; font-weight: 700; color: rgba(255,255,255,.7); }
+  .panel li .q { flex: none; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 24px; font-weight: 900; padding: 8px 16px; border-radius: 999px; background: rgba(255,255,255,.14); }
+  .panel li .q.up { background: rgba(52,199,89,.35); } .panel li .q.down { background: rgba(255,69,58,.35); }
+  .panel.markets li { padding: 10px 22px; }
+  .panel.markets li .t b { font-size: 24px; }
+  .panel .foot { display: none; }
+  .shelf .badge .upd { font-size: 20px; font-weight: 700; color: rgba(255,255,255,.75); }
+  /* Chromium 85 does not clip a composited child to rounded corners, so on the TV nothing relies on the clip:
+     every layer carries its own radius and the partner stays inside the tile. */
+  body.tv .icon { will-change: auto; }
+  body.tv .icon .clip, body.tv .icon .layer.back { border-radius: 30px; }
+  body.tv .icon .layer.back { top: 0; right: 0; bottom: 0; left: 0; }
+  body.tv .icon .layer.front { top: 0; right: 0; bottom: 0; left: 0; }
+  body.tv .icon .mon { right: 4px; bottom: 4px; width: 136px; height: 136px; transition: none; }
+  body.tv .icon.is-focused .mon { transform: translateY(-10px) scale(1.08); }
+  body.tv .icon.is-focused { transform: scale(1.1); box-shadow: 0 0 0 6px #fff; outline: none; }
+  body.tv .rows { will-change: auto; }
+  body.tv .shelf .art, body.tv .shelf .slides, body.tv .clockpanel, body.tv .sheet { box-shadow: none; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="bg"><video id="aerial" muted playsinline preload="none"></video><div class="wash"></div><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  
+  <div class="topbar">
+    <span class="mark"><i class="ball"></i>hush</span>
+    <span class="greet" id="greet"></span>
+    <div class="pill" data-act="mute" id="pill-mute" role="button" aria-label="Sound"><svg viewBox="0 0 24 24"><path id="mute-glyph" d=""/></svg></div>
+    <div class="pill" data-act="arrange" role="button" aria-label="Arrange apps"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg></div>
+    <div class="pill" data-act="inputs" role="button" aria-label="Inputs"><svg viewBox="0 0 24 24"><path d="M3 8h18v6l-2 3H5l-2-3zm3 2v2h12v-2z"/></svg></div>
+    <div class="pill" data-act="settings" role="button" aria-label="Settings"><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.5 4 2 1.5-2 3.5-2.4-.8a7 7 0 0 1-1.7 1l-.4 2.5h-4l-.4-2.5a7 7 0 0 1-1.7-1l-2.4.8-2-3.5 2-1.5v-2L1.5 8l2-3.5 2.4.8a7 7 0 0 1 1.7-1L8 1.8h4l.4 2.5a7 7 0 0 1 1.7 1l2.4-.8 2 3.5-2 1.5z"/></svg></div>
+    <div class="pill" data-act="clock" role="button" aria-label="Clock"><span id="clock"></span></div>
+  </div>
+  <div class="clockpanel"><div class="big" id="cp-time"></div><div class="small" id="cp-date"></div></div>
+
+  <header class="shelf" id="shelf">
+    <div class="art"><svg viewBox="0 0 24 24" id="art-glyph"><path d=""/></svg><div class="mon-ring"></div><img class="mon" id="shelf-mon" alt=""><div class="badge"><b id="shelf-type"></b><span class="hp" id="shelf-hp"></span><span class="partner" id="shelf-partner"></span><span class="upd" id="shelf-upd"></span></div>
+      <div class="copy"><h1 id="shelf-title"></h1><p id="shelf-sub"></p></div></div>
+    <div class="slides" id="slides">
+      <img alt="" id="img-a" hidden><img alt="" id="img-b" hidden>
+      <div class="posters" id="posters"></div>
+      <div class="cta" id="cta"></div>
+      <div class="copy"><h1 id="s-title"></h1><div class="meta" id="s-meta"></div></div>
+      <div class="dots" id="dots" hidden></div>
+    </div>
+    <div class="note" id="note"></div>
+    <div class="panel" id="panel"><h2 id="panel-title"></h2><ol id="panel-list"></ol><div class="foot" id="panel-foot"></div></div>
+  </header>
+  <form class="sheet" id="sheet" autocomplete="off">
+    <h2>Settings</h2>
+    <p>Posters and "where to watch" come from TMDB. Make a free account at themoviedb.org, copy the API key (v3), and paste it here. It is stored on this TV only.</p>
+    <label for="tmdb-key">TMDB API key</label>
+    <input id="tmdb-key" placeholder="e.g. 3f1a…">
+    <label for="region">Country code for availability</label>
+    <input id="region" placeholder="IL" maxlength="2">
+    <label for="feed">News feed (RSS)</label>
+    <input id="feed" placeholder="https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en">
+    <label for="symbols">Markets: coins (BTC, ETH…) and currencies against USD (ILS, EUR…)</label>
+    <input id="symbols" placeholder="BTC, ETH, SOL, ILS, EUR, GBP">
+    <div class="foot">OK saves · Back closes</div>
+  </form>
+
+  <main class="rows" id="rows"></main>
+  <div class="hint" id="hint"></div>
+  <div class="saver"><div><div class="time" id="time"></div><div class="date" id="date"></div></div><div class="where" id="where"></div><div class="wild"><div class="ring"></div><img id="wild-img" alt=""><div class="dex" id="wild-dex"></div><div class="box"><span id="wild-text"></span><small id="wild-sub"></small></div></div></div>
+</div>
+
+<script>window.HUSH_CONFIG = {};</script>
+<script>
+(function () {
+  'use strict';
+  var G = {
+    netflix: 'M6 3h3.4l4.3 9.6V3H18v18h-3.4l-4.3-9.6V21H6z',
+    play:    'M8 5v14l11-7z',
+    spotify: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm4.4 14.5c-.2.3-.6.4-.9.2-2.5-1.5-5.6-1.9-9.3-1-.4.1-.7-.1-.8-.5s.1-.7.5-.8c4-.9 7.5-.5 10.3 1.2.3.2.4.6.2.9zm1.2-2.7c-.2.4-.7.5-1.1.3-2.9-1.8-7.2-2.3-10.6-1.2-.4.1-.9-.1-1-.5s.1-.9.5-1c3.9-1.2 8.7-.6 12 1.4.3.2.4.7.2 1zm.1-2.8C14.2 9 8.5 8.8 5.2 9.8c-.5.2-1-.1-1.2-.6s.1-1 .6-1.2c3.8-1.2 10.1-.9 14.1 1.4.5.3.6.9.4 1.3-.3.5-.9.6-1.4.3z',
+    tv:      'M3 5h18a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm5 14h8v1.5H8z',
+    gear:    'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.5 4 2 1.5-2 3.5-2.4-.8a7 7 0 0 1-1.7 1l-.4 2.5h-4l-.4-2.5a7 7 0 0 1-1.7-1l-2.4.8-2-3.5 2-1.5v-2L1.5 8l2-3.5 2.4.8a7 7 0 0 1 1.7-1L8 1.8h4l.4 2.5a7 7 0 0 1 1.7 1l2.4-.8 2 3.5-2 1.5z',
+    hdmi:    'M3 8h18v6l-2 3H5l-2-3zm3 2v2h12v-2z',
+    music:   'M9 3v12.3A3.5 3.5 0 1 0 11 18V7h7V3z',
+    photos:  'M12 2l2.5 5.5L20 9l-4 4 1 5.5-5-2.6-5 2.6 1-5.5-4-4 5.5-1.5z',
+    game:    'M7 7h10a5 5 0 0 1 5 5v1a5 5 0 0 1-5 5l-2-2H9l-2 2a5 5 0 0 1-5-5v-1a5 5 0 0 1 5-5zm1 3v2H6v2h2v2h2v-2h2v-2h-2v-2zm8 1a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm2 2a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
+    search:  'M10 3a7 7 0 1 1 0 14 7 7 0 0 1 0-14zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm6.5 10 4.5 4.5-1.5 1.5-4.5-4.5z'
+  };
+  // Six per row, tvOS default. Row one is the Dock and feeds the Top Shelf.
+  var APPS = [
+    // match: the app's name on a Samsung (ids differ by TV year); webos: LG's app id; android: package names to try.
+    { id: 'netflix',  name: 'Netflix',   bg: '#b0060f', glyph: 'netflix', sub: 'Popular on Netflix', provider: 8,
+      match: /^netflix$/i, webos: 'netflix', android: ['com.netflix.ninja'] },
+    { id: 'youtube',  name: 'YouTube',   bg: '#e00000', glyph: 'play',    sub: 'Trending this week', trending: true,
+      match: /^youtube$/i, webos: 'youtube.leanback.v4', android: ['com.google.android.youtube.tv'] },
+    { id: 'disney',   name: 'Disney+',   bg: '#0a2a66', word: 'D+',       sub: 'Popular on Disney+', provider: 337,
+      match: /^disney\+?$/i, webos: 'com.disney.disneyplus-prod', android: ['com.disney.disneyplus'] },
+    { id: 'spotify',  name: 'Spotify',   bg: '#17a34a', glyph: 'spotify', sub: 'Your daily mix',
+      match: /^spotify$/i, webos: 'spotify-beehive', android: ['com.spotify.tv.android'] },
+    { id: 'news',     name: 'News',      bg: '#1f6feb', glyph: 'news',    sub: 'Headlines', panel: 'news' },
+    { id: 'stocks',   name: 'Markets',   bg: '#0f9d58', glyph: 'chart',   sub: 'Watchlist', panel: 'stocks' },
+    { id: 'tv',       name: 'Apple TV',  bg: '#1c1c1e', glyph: 'tv',      sub: 'Popular on Apple TV+', provider: 350,
+      match: /^apple tv/i, webos: 'com.apple.appletv', android: ['com.apple.atve.androidtv.appletv', 'com.apple.atve.sony.appletv'] },
+    { id: 'plex',     name: 'Plex',      bg: '#d99212', word: 'plex',     sub: 'Trending this week', trending: true,
+      match: /^plex$/i, webos: 'cdp-30', android: ['com.plexapp.android'] },
+    { id: 'music',    name: 'Music',     bg: '#f02d4b', glyph: 'music',   sub: 'Listen now',
+      match: /^apple music$/i, webos: 'com.apple.music', android: ['com.apple.android.music'] },
+    { id: 'photos',   name: 'Photos',    bg: '#3b6fd9', glyph: 'photos',  sub: 'Memories',
+      match: /^gallery$/i, webos: 'com.webos.app.photovideo', android: ['com.google.android.apps.photos'] },
+    { id: 'games',    name: 'Games',     bg: '#5b3fb8', glyph: 'game',    sub: 'Play together',
+      match: /^(gaming hub|xbox)$/i, webos: 'com.webos.app.game', android: ['com.google.android.play.games'] },
+    { id: 'hdmi1',    name: 'HDMI 1',    bg: '#3a3a3c', glyph: 'hdmi',    sub: 'PlayStation',
+      source: 'HDMI1', webos: 'com.webos.app.hdmi1', android: [] },
+    { id: 'prime',    name: 'Prime Video', bg: '#1a98ff', glyph: 'play',  sub: 'Popular on Prime Video', provider: 119,
+      match: /^(amazon )?prime video$|^amazon( instant)? video$/i, webos: 'amazon', android: ['com.amazon.amazonvideo.livingroom'] },
+    { id: 'max',      name: 'Max',       bg: '#002be7', word: 'max',      sub: 'Popular on Max', provider: 1899,
+      match: /^(hbo )?max$/i, webos: 'com.hbo.hbomax', android: ['com.wbd.stream'] },
+    { id: 'twitch',   name: 'Twitch',    bg: '#9146ff', glyph: 'play',    sub: 'Live now',
+      match: /^twitch$/i, webos: 'tv.twitch.tv.starshot.lg', android: ['tv.twitch.android.app'] },
+    { id: 'tvplus',   name: 'TV Plus',   bg: '#1428a0', glyph: 'tv',      sub: 'Free channels',
+      match: /^(samsung )?tv plus$/i, webos: 'com.webos.app.lgchannels', android: [] },
+    { id: 'browser',  name: 'Browser',   bg: '#3a3a3c', glyph: 'search',  sub: 'The web',
+      match: /^(internet|web browser|browser)$/i, webos: 'com.webos.app.browser', android: [] },
+    { id: 'search',   name: 'Search',    bg: '#2c2c2e', glyph: 'search',  sub: 'Find anything',
+      match: /^(search|universal guide)$/i, webos: 'com.webos.app.search', android: ['com.google.android.katniss'] },
+    { id: 'settings', name: 'Settings',  bg: '#636366', glyph: 'gear',    sub: '' }
+  ];
+  var PER_ROW = 6, IDLE_MS = 120000, HOLD_MS = 600, SWAY_MS = 1500, SLIDE_MS = 5000, WILD_MS = 60000;
+  // Each app gets a Pokémon type for its card; the colours are the classic type palette.
+  var TYPE = { netflix: 'fire', youtube: 'electric', disney: 'fairy', spotify: 'grass', tv: 'psychic', plex: 'ground',
+               music: 'water', photos: 'ice', games: 'fighting', hdmi1: 'steel', search: 'normal', settings: 'rock',
+               news: 'flying', stocks: 'normal', prime: 'fire', max: 'ghost', twitch: 'ghost', tvplus: 'normal', browser: 'psychic' };
+  var ART = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/';
+  var PARTNER = { netflix: [6, 'Charizard'], youtube: [25, 'Pikachu'], disney: [39, 'Jigglypuff'], spotify: [1, 'Bulbasaur'], tv: [150, 'Mewtwo'],
+                  plex: [28, 'Sandslash'], music: [7, 'Squirtle'], photos: [131, 'Lapras'], games: [68, 'Machamp'], hdmi1: [81, 'Magnemite'],
+                  search: [133, 'Eevee'], settings: [95, 'Onix'], news: [18, 'Pidgeot'], stocks: [137, 'Porygon'],
+                  prime: [59, 'Arcanine'], max: [94, 'Gengar'], twitch: [93, 'Haunter'], tvplus: [52, 'Meowth'], browser: [96, 'Drowzee'] };
+  var TYPE_COLOR = { flying: '#a890f0', ghost: '#705898', fire: '#f08030', electric: '#f8d030', fairy: '#ee99ac', grass: '#78c850', psychic: '#f85888', ground: '#e0c068',
+                     water: '#6890f0', ice: '#98d8d8', fighting: '#c03028', steel: '#b8b8d0', normal: '#a8a878', rock: '#b8a038' };
+  var TMDB = 'https://api.themoviedb.org/3', IMG = 'https://image.tmdb.org/t/p/w1280';
+  var zone = 'grid', slides = [], slide = 0, slideTimer = null, imgOn = 'a', listCache = {}, fetchSeq = 0;
+  // AERIALS comes from aerials.js (Apple's entries.json, flattened): a script, since a packaged app runs from file:// where fetch of a local file is refused. shortcut: the videos are plain http, so an https build must proxy or bundle them.
+  var pills = document.querySelectorAll('.pill'), pillFocus = 4, muted = !!load('hush.muted');
+
+  var BUILTIN = /^(hdmi\d|news|stocks|settings)$/;
+  var POOL = [4, 9, 12, 16, 23, 27, 35, 37, 41, 43, 46, 52, 54, 56, 58, 60, 63, 66, 72, 74, 77, 79, 84, 86, 88, 90, 92, 96, 98, 100, 102, 104, 106, 108, 111, 113, 115, 116, 118, 120, 122, 123, 124, 127, 129, 132, 134, 136, 138, 140, 142, 143, 147];
+  var PALETTE = ['#e0564b', '#f08030', '#f2b134', '#2fb36b', '#1e9e8a', '#2f80ed', '#5b5bd6', '#9b51e0', '#d6409f', '#6d7d8c'];
+  var POOL_NAMES = { 4: 'Charmander', 9: 'Blastoise', 12: 'Butterfree', 16: 'Pidgey', 23: 'Ekans', 27: 'Sandshrew', 35: 'Clefairy', 37: 'Vulpix', 41: 'Zubat', 43: 'Oddish', 46: 'Paras', 52: 'Meowth', 54: 'Psyduck', 56: 'Mankey', 58: 'Growlithe', 60: 'Poliwag', 63: 'Abra', 66: 'Machop', 72: 'Tentacool', 74: 'Geodude', 77: 'Ponyta', 79: 'Slowpoke', 84: 'Doduo', 86: 'Seel', 88: 'Grimer', 90: 'Shellder', 92: 'Gastly', 96: 'Drowzee', 98: 'Krabby', 100: 'Voltorb', 102: 'Exeggcute', 104: 'Cubone', 106: 'Hitmonlee', 108: 'Lickitung', 111: 'Rhyhorn', 113: 'Chansey', 115: 'Kangaskhan', 116: 'Horsea', 118: 'Goldeen', 120: 'Staryu', 122: 'Mr. Mime', 123: 'Scyther', 124: 'Jynx', 127: 'Pinsir', 129: 'Magikarp', 132: 'Ditto', 134: 'Vaporeon', 136: 'Flareon', 138: 'Omanyte', 140: 'Kabuto', 142: 'Aerodactyl', 143: 'Snorlax', 147: 'Dratini' };
+  function hash(t) { var h = 0; for (var i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0; return h; }
+  function adoptSources(list) {
+    var hdmi = list.filter(function (x) { return x.type === 'HDMI' && x.number >= 1 && x.number <= 4; });
+    if (!hdmi.length) return;
+    APPS = APPS.filter(function (a) { return !a.source; });
+    hdmi.forEach(function (x) {
+      var id = 'hdmi' + x.number;
+      APPS.push({ id: id, name: 'HDMI ' + x.number, bg: '#3a3a3c', glyph: 'hdmi', sub: 'Input ' + x.number, source: 'HDMI' + x.number, webos: 'com.webos.app.hdmi' + x.number, android: [] });
+      PARTNER[id] = [[81, 'Magnemite'], [82, 'Magneton'], [100, 'Voltorb'], [101, 'Electrode']][x.number - 1]; TYPE[id] = 'steel';
+    });
+    order = order.filter(function (id) { return !!app(id); });
+    APPS.forEach(function (a) { if (order.indexOf(a.id) < 0) order.push(a.id); });
+    dockPanels(); focus = Math.min(focus, order.length - 1);
+    render();
+  }
+  function adoptInstalled(list) {
+    if (!list.length) return;
+    var known = APPS.filter(function (a) { return a.match; }), used = {};
+    var next = APPS.filter(function (a) { return BUILTIN.test(a.id); });
+    list.forEach(function (x) { // only apps this skin knows; the TV's other pieces stay out
+      var k = known.filter(function (a) { return a.match.test(x.name); })[0];
+      if (k && !used[k.id]) { used[k.id] = true; k.tvId = x.id; next.push(k); }
+    });
+    // Smart Hub's order is not readable: known apps first in their own order, then the rest alphabetically
+    var rest = next.filter(function (a) { return a.id.indexOf('tv:') === 0; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+    APPS = next.filter(function (a) { return a.id.indexOf('tv:') !== 0 && !BUILTIN.test(a.id); })
+      .concat(rest).concat(next.filter(function (a) { return BUILTIN.test(a.id); }));
+    order = order.filter(function (id) { return !!app(id); });
+    APPS.forEach(function (a) { if (order.indexOf(a.id) < 0) order.push(a.id); });
+    dockPanels(); focus = Math.min(focus, order.length - 1);
+    render();
+  }
+
+  var rows = document.getElementById('rows'), hint = document.getElementById('hint');
+  var order = (load('hush.order') || []).filter(function (id) { return !!app(id); });
+  APPS.forEach(function (a) { if (order.indexOf(a.id) < 0) order.push(a.id); });
+  function dockPanels() { // a tile whose content shows in the Top Shelf has to be in the dock, where the shelf is visible
+    ['news', 'stocks'].forEach(function (id, i) {
+      var at = order.indexOf(id), want = Math.min(4 + i, PER_ROW - 1);
+      if (at >= PER_ROW) { order.splice(at, 1); order.splice(want, 0, id); }
+    });
+  }
+  dockPanels();
+  var focus = 0, holdTimer = null, held = false, arranging = false, idleTimer = null, swayTimer = null;
+
+  function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+  function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  function app(id) { for (var i = 0; i < APPS.length; i++) if (APPS[i].id === id) return APPS[i]; }
+
+  function render() {
+    rows.innerHTML = '';
+    var row;
+    order.forEach(function (id, i) {
+      var a = app(id); if (!a) return;
+      if (i % PER_ROW === 0) { row = document.createElement('div'); row.className = 'row' + (i === 0 ? ' dock' : ''); rows.appendChild(row); }
+      var el = document.createElement('div');
+      el.className = 'icon';
+      el.style.setProperty('--bg', a.bg);
+      el.setAttribute('role', 'button'); el.setAttribute('aria-label', a.name);
+      el.innerHTML =
+        '<div class="clip"><div class="layer back"></div>' +
+        '<div class="layer front">' + (a.icon ? '<img class="appicon" alt="" src="' + a.icon + '">' : a.word ? '<span class="word">' + a.word + '</span>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + G[a.glyph] + '"/></svg>') + '</div>' +
+        (PARTNER[a.id] ? '<img class="mon" alt="" src="' + ART + PARTNER[a.id][0] + '.png">' : '') +
+        '<div class="shine"></div></div><div class="edge"></div>' +
+        '<div class="label">' + a.name + '</div>';
+      el.addEventListener('mouseenter', function () { setFocus(i, 0, 0); });
+      el.addEventListener('click', function () { press(el); open(id); });
+      row.appendChild(el);
+    });
+    setFocus(focus, 0, 0);
+  }
+
+  function setFocus(i, dx, dy) {
+    focus = Math.max(0, Math.min(order.length - 1, i));
+    var icons = rows.querySelectorAll('.icon');
+    for (var k = 0; k < icons.length; k++) { icons[k].classList.toggle('is-focused', k === focus); icons[k].classList.remove('sway'); }
+    var a = app(order[focus]);
+    document.documentElement.style.setProperty('--tint', a.bg);
+    var row = Math.floor(focus / PER_ROW);
+    document.body.classList.toggle('scrolled', row >= 1);
+    rows.style.transform = row >= 1 ? 'translateY(' + (-(620 + (row - 1) * 240)) + 'px)' : '';
+    document.getElementById('shelf-title').textContent = a.name;
+    document.getElementById('shelf-sub').textContent = a.sub;
+    document.getElementById('shelf-type').textContent = (TYPE[a.id] || 'normal').toUpperCase();
+    document.getElementById('shelf-hp').textContent = 'HP ' + (60 + (a.name.length * 7) % 60);
+    document.documentElement.style.setProperty('--type', TYPE_COLOR[TYPE[a.id] || 'normal']);
+    var pm = PARTNER[a.id];
+    document.getElementById('shelf-mon').src = pm ? ART + pm[0] + '.png' : '';
+    document.getElementById('shelf-partner').textContent = pm ? 'Partner: ' + pm[1] : '';
+    document.getElementById('art-glyph').innerHTML = '<path d="' + (G[a.glyph] || G.tv) + '"/>';
+    document.getElementById('shelf-sub').textContent = a.sub;
+    loadShelf(a);
+    var el = icons[focus];
+    if (el && (dx || dy)) { tick(); sweep(el); }
+    if (el && (dx || dy)) {
+      el.style.setProperty('--ty', dx * 6);
+      el.style.setProperty('--tx', dy * -6);
+      setTimeout(function () { el.style.setProperty('--ty', 0); el.style.setProperty('--tx', 0); }, 220);
+    }
+    clearTimeout(swayTimer);
+    swayTimer = setTimeout(function () { if (el && !arranging) el.classList.add('sway'); }, SWAY_MS);
+    bump();
+  }
+
+  function move(dx, dy) {
+    var j = focus + dx + dy * PER_ROW;
+    if (dx && Math.floor(j / PER_ROW) !== Math.floor(focus / PER_ROW)) return;
+    if (j < 0 || j >= order.length) return;
+    if (arranging) {
+      var t = order[focus]; order[focus] = order[j]; order[j] = t;
+      focus = j; save('hush.order', order); render(); return;
+    }
+    setFocus(j, dx, dy);
+  }
+
+  // ---- The TV under the page: Samsung (Tizen web APIs), LG (Luna), Android (the Hush bridge in the APK), or a browser.
+  var TV = (function () {
+    var webos = /Web0S|webOS/i.test(navigator.userAgent) || !!window.PalmServiceBridge;
+    var samsung = !webos && typeof window.tizen !== 'undefined' && !!window.tizen.application;
+    var android = !!window.Hush && typeof window.Hush.launch === 'function';
+    var samsungIds = null;
+
+    function luna(uri, params, done) {
+      try {
+        var b = new window.PalmServiceBridge();
+        b.onservicecallback = function (msg) { var r = null; try { r = JSON.parse(msg); } catch (e) {} done(r && r.returnValue !== false ? r : null); };
+        b.call(uri, JSON.stringify(params || {}));
+      } catch (e) { done(null); }
+    }
+    function samsungIndex(done) { // the installed apps by name, once; ids differ from TV to TV
+      if (samsungIds) return done(samsungIds);
+      try {
+        window.tizen.application.getAppsInfo(function (list) {
+          samsungIds = list.map(function (x) { return { id: x.id, name: x.name || '' }; }); done(samsungIds);
+        }, function () { samsungIds = []; done(samsungIds); });
+      } catch (e) { samsungIds = []; done(samsungIds); }
+    }
+    function samsungSources(done, all) { // [{type:'HDMI', number}] the TV reports, or null
+      try {
+        window.tizen.systeminfo.getPropertyValue('VIDEOSOURCE', function (v) {
+          done(v && v.connected ? (all ? v.connected.concat(v.disconnected || []) : v.connected) : null);
+        }, function () { done(null); });
+      } catch (e) { done(null); }
+    }
+    function samsungSource(type, number, done) { // switch the source, then bring the TV's viewer up to show it
+      function show(ok) {
+        if (!ok) return done(false);
+        try { window.tizen.application.launch('org.tizen.tv-viewer', function () { done(true); }, function () { hide(); done(true); }); }
+        catch (e) { hide(); done(true); }
+      }
+      samsungSources(function (sources) {
+        var src = null;
+        for (var i = 0; sources && i < sources.length; i++) if (sources[i].type === type && sources[i].number === number) src = sources[i];
+        if (!src) return show(type === 'TV');
+        try { window.tizen.tvwindow.setSource(src, function () { show(true); }, function () { show(false); }); } catch (e) { show(false); }
+      }, true);
+    }
+    function samsungLaunch(a, done) {
+      if (a.source) return samsungSource(a.source.replace(/\d+$/, ''), +a.source.replace(/\D/g, ''), done);
+      function go(id) { try { window.tizen.application.launch(id, function () { done(true); }, function () { done(false); }); } catch (e) { done(false); } }
+      if (a.tvId) return go(a.tvId);
+      samsungIndex(function (apps) {
+        var hit = apps.filter(function (x) { return a.match && a.match.test(x.name.trim()); })[0];
+        if (!hit) return done(false);
+        go(hit.id);
+      });
+    }
+    // Not shown among Samsung's apps: Smart Hub's own pieces, services, players, keyboards (filter after Free My TV, MIT).
+    var SAMSUNG_HIDDEN = new RegExp('^(org\\.volt\\.|org\\.tizen\\.(?!browser$|netflix|primevideo$|globoplay)|org\\.tizen\\.netflixlowmem$|ise-|ug-|d75857a5-)' +
+      '|[Ss]ervice$|[Dd]aemon|Preview$|syspopup|[Hh]elper$|AdPlayer|AdSuite|[Kk]eyboard|\\.OTApp$' +
+      '|^com\\.samsung\\.calendar-account-manager' +
+      '|^com\\.samsung\\.tv\\.(?!store$|SmartThingsApp$|aria-video$|knox-browser-win365$|tvplus$|gaminghub$)' +
+      '|^com\\.samsung\\.tizen\\.' +
+      '|^com\\.samsung\\.(ep[-.]|rdm[-.]|SelfDiagnosis$|mtm-banner$|hitcomp$|video-test$)' +
+      '|^com\\.sausng\\.|^adplatform\\.' +
+      '|^(unified-drm-|lib-|p2p-asm|mobilebff$|comss$|acm-watcher$|dmr_service_app$|aifw-|csapi-|capi-|ep-|test-|emergency-log-transmitter$|samsung-easy-support$)');
+    function installed(done) { // done([{id, name, icon}]) — [] where the TV cannot tell
+      if (!samsung) return done([]);
+      var self = '';
+      try { self = window.tizen.application.getCurrentApplication().appInfo.id; } catch (e) {}
+      try {
+        window.tizen.application.getAppsInfo(function (list) {
+          var out = [];
+          for (var i = 0; i < list.length; i++) {
+            var a = list[i];
+            if (!a.id || a.id === self || /^(HushTV0001|PokdexTV01)\./.test(a.id) || SAMSUNG_HIDDEN.test(a.id) || a.show === false) continue;
+            var icon = a.iconPath || '';
+            if (icon && icon.indexOf('://') < 0) icon = 'file://' + icon;
+            out.push({ id: a.id, name: String(a.name || a.id).trim(), icon: icon });
+          }
+          var store = out.some(function (x) { return /\.Netflix$/.test(x.id); });
+          if (store) out = out.filter(function (x) { return x.id.indexOf('org.tizen.netflix') !== 0; });
+          samsungIds = out.map(function (x) { return { id: x.id, name: x.name }; });
+          done(out);
+        }, function () { done([]); });
+      } catch (e) { done([]); }
+    }
+    function hide() { if (samsung) { try { window.tizen.application.getCurrentApplication().hide(); } catch (e) {} } }
+    function samsungSettings(done) { // whichever app answers the platform's "setting" request, else the TV's menu app
+      function menu(why) {
+        try { window.tizen.application.launch('org.tizen.menu', function () { done(true); }, function (e2) { done(false, why + ' / menu: ' + (e2 && e2.message)); }); }
+        catch (e3) { done(false, why + ' / ' + e3.message); }
+      }
+      try {
+        var control = new window.tizen.ApplicationControl('http://tizen.org/appcontrol/operation/setting', null, null, null, []);
+        window.tizen.application.launchAppControl(control, null, function () { done(true); }, function (e) { menu('setting: ' + (e && e.message)); });
+      } catch (e) { menu(e.message); }
+    }
+
+    return {
+      name: webos ? 'webos' : samsung ? 'samsung' : android ? 'android' : 'web',
+      launch: function (a, done) {
+        if (samsung) return samsungLaunch(a, done);
+        if (webos) return luna('luna://com.webos.applicationManager/launch', { id: a.webos }, function (r) { done(!!r); });
+        if (android) {
+          var ok = false;
+          try { ok = a.source ? !!window.Hush.input(+a.source.replace(/\D/g, '')) : !!window.Hush.launch((a.android || []).join(',')); } catch (e) {}
+          return done(ok);
+        }
+        setTimeout(function () { done(true); }, 0); // a browser: nothing to open
+      },
+      /** The TV's own settings; done(false) where no TV answers (a browser), so the caller shows its own. */
+      settings: function (done) {
+        if (samsung) return samsungSettings(done);
+        if (webos) return luna('luna://com.webos.applicationManager/launch', { id: 'com.palm.app.settings' }, function (r) { done(!!r); });
+        if (android) { var ok = false; try { ok = !!window.Hush.openSettings(); } catch (e) {} return done(ok); }
+        done(false);
+      },
+      hide: hide,
+      installed: installed,
+      /** done([{type, number}]) — the connected video sources, [] where the TV cannot tell. */
+      sources: function (done) { if (!samsung) return done([]); samsungSources(function (l) { done(l || []); }); },
+      /** Toggles the TV's own mute; done(muted) or done(null) where there is no TV audio API. */
+      toggleMute: function (done) {
+        try {
+          var ac = window.tizen.tvaudiocontrol, m = !ac.isMute();
+          ac.setMute(m); done(m);
+        } catch (e) {
+          if (webos) return luna('luna://com.webos.service.audio/master/setMuted', { mute: true }, function (r) { done(r ? true : null); });
+          done(null);
+        }
+      }
+    };
+  })();
+
+  var onTv = TV.name !== 'web' || /[?#]tv/.test(location.href);
+  if (onTv) document.body.classList.add('tv');
+
+  // ---- Aerials: Apple's flyovers, chosen by time of day, one after another.
+  var video = document.getElementById('aerial'), playlist = [], vi = 0;
+  function loadAerials() {
+    Promise.resolve(window.AERIALS || []).then(function (groups) {
+      var h = new Date().getHours(), want = (h >= 7 && h < 19) ? 'day' : 'night';
+      var all = [];
+      groups.forEach(function (a) { if (a.timeOfDay === want) all.push(a); });
+      for (var i = all.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = all[i]; all[i] = all[j]; all[j] = t; }
+      playlist = all; vi = 0;
+      if (playlist.length && !onTv) playAerial(); // on a TV the screensaver starts it
+    }).catch(function () {});
+  }
+  function playAerial() {
+    var a = playlist[vi % playlist.length];
+    video.classList.remove('on');
+    video.src = a.url; video.load();
+    document.getElementById('where').textContent = a.label || '';
+    video.play().then(function () { video.classList.add('on'); document.body.classList.add('video'); }).catch(function () {});
+  }
+  video.addEventListener('ended', function () { vi++; playAerial(); });
+  video.addEventListener('error', function () { vi++; if (playlist.length > 1) setTimeout(playAerial, 500); });
+
+  // ---- The screensaver: a wild Pokémon from PokéAPI (the first 151), another every minute.
+  var wildTimer = null, wildSeq = 0;
+  function showWild() {
+    var id = 1 + Math.floor(Math.random() * 151), seq = ++wildSeq;
+    fetch('https://pokeapi.co/api/v2/pokemon/' + id).then(function (r) { return r.json(); }).then(function (d) {
+      if (seq !== wildSeq || !document.body.classList.contains('idle')) return;
+      var name = d.name.toUpperCase(), art = (d.sprites.other && d.sprites.other['official-artwork'] || {}).front_default || d.sprites.front_default;
+      var img = document.getElementById('wild-img'), pre = new Image();
+      pre.onload = function () { img.src = art; };
+      pre.src = art;
+      document.getElementById('wild-text').textContent = 'A wild ' + name + ' appeared!';
+      document.getElementById('wild-sub').textContent = d.types.map(function (t) { return t.type.name.toUpperCase(); }).join(' / ') +
+        '  ·  ' + (d.height / 10) + ' m  ·  ' + (d.weight / 10) + ' kg';
+      document.getElementById('wild-dex').textContent = 'No.' + ('00' + d.id).slice(-3);
+      tone(880, .08, .05); tone(1175, .12, .05, .09);
+    }).catch(function () { document.getElementById('wild-text').textContent = 'The tall grass is quiet…'; });
+    clearTimeout(wildTimer); wildTimer = setTimeout(showWild, WILD_MS);
+  }
+
+  // ---- Sounds: a short tick on navigation, a soft chord on launch; synthesised, no files.
+  var ac = null;
+  function tone(f, t, gain, when) {
+    if (muted) return;
+    try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+    var o = ac.createOscillator(), g = ac.createGain(), at = ac.currentTime + (when || 0);
+    o.type = 'triangle'; o.frequency.value = f;
+    g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(gain, at + .005); g.gain.exponentialRampToValueAtTime(.0001, at + t);
+    o.connect(g); g.connect(ac.destination); o.start(at); o.stop(at + t);
+  }
+  function tick() { tone(1046, .035, .05); }
+  function chime() { tone(523, .09, .07); tone(659, .09, .07, .09); tone(784, .18, .07, .18); }
+  function setMuted(m) {
+    muted = m; save('hush.muted', m);
+    document.getElementById('mute-glyph').setAttribute('d', m
+      ? 'M4 9v6h4l5 4V5L8 9zm12.5 3 2.5-2.5-1.5-1.5L15 10.5 12.5 8 11 9.5l2.5 2.5L11 14.5l1.5 1.5 2.5-2.5 2.5 2.5 1.5-1.5z'
+      : 'M4 9v6h4l5 4V5L8 9zm11 3a3 3 0 0 0-1.7-2.7v5.4A3 3 0 0 0 15 12zm-1.7-7v2.1A5 5 0 0 1 17 12a5 5 0 0 1-3.7 4.9V19A7 7 0 0 0 19 12a7 7 0 0 0-5.7-7z');
+    document.getElementById('pill-mute').classList.toggle('off', m);
+  }
+
+  // ---- Pills (top row)
+  function setPill(i) {
+    pillFocus = Math.max(0, Math.min(pills.length - 1, i));
+    for (var k = 0; k < pills.length; k++) { pills[k].classList.toggle('is-focused', zone === 'pills' && k === pillFocus); }
+    sweep(pills[pillFocus]);
+  }
+  function enterPills() {
+    zone = 'pills'; clearTimeout(swayTimer); document.body.classList.remove('zone-shelf');
+    rows.querySelectorAll('.icon').forEach(function (el) { el.classList.remove('is-focused', 'sway'); });
+    setPill(pillFocus);
+  }
+  function leavePills() { zone = 'grid'; for (var k = 0; k < pills.length; k++) pills[k].classList.remove('is-focused'); document.body.classList.remove('clock-open'); setFocus(focus, 0, 0); }
+  function pillAction(act) {
+    if (act === 'mute') TV.toggleMute(function (m) { setMuted(m === null ? !muted : m); hint.textContent = m === null ? '' : (m ? 'TV muted' : 'TV sound on'); hint.style.opacity = m === null ? '' : 1; setTimeout(function () { hint.style.opacity = ''; }, 1200); });
+    else if (act === 'settings') openSheet();
+    else if (act === 'clock') document.body.classList.toggle('clock-open');
+    else if (act === 'arrange') { leavePills(); arranging = true; document.body.classList.add('arranging'); hint.textContent = 'Move with the arrows · Back when done'; }
+    else if (act === 'inputs') { leavePills(); var i = order.indexOf('hdmi1'); if (i >= 0) setFocus(i, 0, 0); }
+  }
+  for (var pi = 0; pi < pills.length; pi++) (function (el, i) {
+    el.addEventListener('mouseenter', function () { if (zone !== 'sheet') { enterPills(); setPill(i); } });
+    el.addEventListener('click', function () { pillAction(el.getAttribute('data-act')); });
+  })(pills[pi], pi);
+  function sweep(el) { // the stripe runs inside the clipped box, never past the edges
+    if (!el) return; var t = el.querySelector('.clip') || el;
+    t.classList.remove('sweep'); void t.offsetWidth; t.classList.add('sweep');
+    t.addEventListener('animationend', function done() { t.classList.remove('sweep'); t.removeEventListener('animationend', done); });
+  }
+
+  function greeting() {
+    var h = new Date().getHours();
+    return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  }
+
+  // ---- TMDB top shelf
+  function tmdbKey() { return load('hush.tmdb') || (window.HUSH_CONFIG || {}).tmdbKey || ''; }
+  function region() { return (load('hush.region') || (window.HUSH_CONFIG || {}).region || 'IL').toUpperCase(); }
+  function tmdb(path, params) {
+    var q = Object.keys(params || {}).map(function (k) { return k + '=' + encodeURIComponent(params[k]); });
+    q.push('api_key=' + encodeURIComponent(tmdbKey()), 'language=en-US');
+    return fetch(TMDB + path + '?' + q.join('&')).then(function (r) {
+      if (r.status === 401) throw new Error('key');
+      if (!r.ok) throw new Error('http ' + r.status);
+      return r.json();
+    });
+  }
+  function listFor(a) {
+    var k = a.id + ':' + region();
+    if (listCache[k]) return Promise.resolve(listCache[k]);
+    var cached = load('hush.list.' + k);
+    if (cached && Date.now() - cached.at < 3600e3) { listCache[k] = cached.items; return Promise.resolve(cached.items); }
+    var p = a.trending
+      ? tmdb('/trending/all/week', {}).then(function (d) { return d.results; })
+      : Promise.all([
+          tmdb('/discover/movie', { with_watch_providers: a.provider, watch_region: region(), sort_by: 'popularity.desc' }),
+          tmdb('/discover/tv',    { with_watch_providers: a.provider, watch_region: region(), sort_by: 'popularity.desc' })
+        ]).then(function (r) { // interleave films and series so the shelf mixes both
+          var out = [], m = r[0].results, t = r[1].results;
+          for (var i = 0; i < Math.max(m.length, t.length); i++) { if (m[i]) out.push(m[i]); if (t[i]) out.push(t[i]); }
+          return out;
+        });
+    return p.then(function (items) {
+      items = items.filter(function (x) { return x.poster_path; }).slice(0, 5).map(function (x) {
+        return { title: x.title || x.name, year: (x.release_date || x.first_air_date || '').slice(0, 4),
+                 rating: x.vote_average ? x.vote_average.toFixed(1) : '', backdrop: IMG + x.backdrop_path,
+                 poster: x.poster_path ? 'https://image.tmdb.org/t/p/w342' + x.poster_path : '',
+                 kind: x.title ? 'Film' : 'Series' };
+      });
+      listCache[k] = items; save('hush.list.' + k, { at: Date.now(), items: items });
+      return items;
+    });
+  }
+  // ---- News and markets panels. The feed and the symbols come from Settings; cached ten minutes.
+  var panelCache = {};
+  function feedUrl() { return load('hush.feed') || 'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en'; }
+  function symbols() { return (load('hush.symbols') || 'BTC, ETH, SOL, ILS, EUR, GBP').split(',').map(function (x) { return x.trim(); }).filter(Boolean); }
+  function cached(key, make) {
+    var c = panelCache[key];
+    if (c && Date.now() - c.at < 600e3) return Promise.resolve(c.v);
+    return make().then(function (v) { panelCache[key] = { at: Date.now(), v: v }; return v; });
+  }
+  // The feed goes through rss2json (Google News sends no CORS header); markets are CoinGecko + Frankfurter, both open.
+  function ago(d) {
+    var t = Date.parse(String(d).replace(' ', 'T')); if (isNaN(t)) t = Date.parse(d); if (isNaN(t)) return '';
+    var m = Math.max(0, Math.round((Date.now() - t) / 60000));
+    return ' · ' + (m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago');
+  }
+  function newsItems() {
+    return cached('news:' + feedUrl(), function () {
+      return fetch('https://api.rss2json.com/v1/api.json?rss_url=' + encodeURIComponent(feedUrl()))
+        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+        .then(function (d) {
+          if (d.status !== 'ok') throw new Error(d.message || 'feed error');
+          return d.items.slice(0, 4).map(function (it) {
+            var m = String(it.title).match(/^(.*)\s+-\s+([^-]+)$/);
+            return { text: m ? m[1] : it.title, sub: (m ? m[2] : '') + ago(it.pubDate), q: '' };
+          });
+        });
+    });
+  }
+  function quoteItems() {
+    var want = symbols(), coins = [], fx = [];
+    var ids = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', XRP: 'ripple', DOGE: 'dogecoin', ADA: 'cardano', BNB: 'binancecoin', LTC: 'litecoin', TON: 'the-open-network', AVAX: 'avalanche-2' };
+    var FX = /^(ILS|EUR|GBP|JPY|CHF|CAD|AUD|NZD|SEK|NOK|DKK|PLN|CZK|HUF|TRY|ZAR|MXN|BRL|INR|CNY|HKD|SGD|KRW|THB|RON|BGN|ISK|IDR|MYR|PHP)$/i;
+    want.forEach(function (x) { (FX.test(x) && !ids[x.toUpperCase()] ? fx : coins).push(x); });
+    return cached('markets:' + want.join(','), function () {
+      var coinIds = coins.map(function (c) { return ids[c.toUpperCase()] || c.toLowerCase(); });
+      var pCoins = coinIds.length ? fetch('https://api.coingecko.com/api/v3/simple/price?ids=' + coinIds.join(',') + '&vs_currencies=usd&include_24hr_change=true')
+        .then(function (r) { return r.json(); }) : Promise.resolve({});
+      var pFx = fx.length ? fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=' + fx.join(',')).then(function (r) { return r.json(); }) : Promise.resolve({ rates: {} });
+      return Promise.all([pCoins, pFx]).then(function (r) {
+        var out = [];
+        coins.forEach(function (c, i) {
+          var d = r[0][coinIds[i]];
+          if (!d) return out.push({ text: c, q: '—' });
+          var ch = d.usd_24h_change || 0;
+          out.push({ text: c.toUpperCase(), sub: 'US dollars · 24 h', q: '$' + d.usd.toLocaleString(undefined, { maximumFractionDigits: 2 }) + '  ' + (ch >= 0 ? '▲' : '▼') + Math.abs(ch).toFixed(2) + '%', dir: ch >= 0 ? 'up' : 'down' });
+        });
+        fx.forEach(function (c) { var v = r[1].rates && r[1].rates[c]; out.push({ text: 'USD → ' + c.toUpperCase(), sub: 'ECB reference rate', q: v ? v.toFixed(3) : '—' }); });
+        return out;
+      });
+    });
+  }
+  function showPanel(a) {
+    var title = document.getElementById('panel-title'), list = document.getElementById('panel-list'), foot = document.getElementById('panel-foot');
+    document.body.classList.toggle('has-panel', !!a.panel);
+    if (!a.panel) { document.getElementById('shelf-upd').textContent = ''; return; }
+    document.getElementById('panel').className = 'panel ' + a.panel;
+    list.innerHTML = '<li><span class="t"><b>Loading…</b></span></li>'; document.getElementById('shelf-upd').textContent = '';
+    var seq = ++fetchSeq;
+    (a.panel === 'news' ? newsItems() : quoteItems()).then(function (items) {
+      if (seq !== fetchSeq) return;
+      list.innerHTML = items.map(function (it, i) {
+        return '<li>' + (a.panel === 'news' ? '<span class="n">' + (i + 1) + '</span>' : '') +
+          '<span class="t"><b>' + esc(it.text) + '</b>' + (it.sub ? '<small>' + esc(it.sub) + '</small>' : '') + '</span>' +
+          (it.q ? '<span class="q ' + (it.dir || '') + '">' + esc(it.q) + '</span>' : '') + '</li>';
+      }).join('') || '<li><span class="t"><b>Nothing came back.</b></span></li>';
+      document.getElementById('shelf-upd').textContent = (a.panel === 'news' ? 'Google News' : 'CoinGecko · ECB') + ' · ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' · OK refreshes';
+    }).catch(function (e) { if (seq === fetchSeq) list.innerHTML = '<li><span class="t"><b>Could not load: ' + esc(e && e.message || e) + '</b></span></li>'; });
+  }
+  function esc(t) { return String(t).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+
+  function note(t) { document.getElementById('note').textContent = t || ''; document.body.classList.toggle('has-note', !!t); }
+  function loadShelf(a) {
+    clearTimeout(slideTimer); slides = [];
+    document.body.classList.remove('has-slides');
+    showPanel(a);
+    if (!a.provider && !a.trending) { note(''); return; }
+    if (!tmdbKey()) { note('Open Settings and paste a TMDB key to see what is on ' + a.name + '.'); return; }
+    note('Loading what is on ' + a.name + '…');
+    var seq = ++fetchSeq;
+    listFor(a).then(function (items) {
+      if (seq !== fetchSeq) return; // focus moved on
+      if (!items.length) { note('Nothing found for ' + a.name + ' in ' + region() + '.'); return; }
+      note(''); slides = items; slide = 0; showSlide(true);
+      items.slice(1, 4).forEach(function (s) { new Image().src = s.backdrop; }); // warm the next few
+      document.body.classList.add('has-slides');
+    }).catch(function (e) {
+      if (seq !== fetchSeq) return;
+      note(e.message === 'key' ? 'TMDB refused the key. Open Settings and check it.' : 'TMDB did not answer: ' + (e && e.message || e));
+    });
+  }
+  function showSlide(first) {
+    var s = slides[slide]; if (!s) return;
+    var box = document.getElementById('posters');
+    if (first || box.children.length !== slides.length) {
+      box.innerHTML = slides.map(function (x, i) { return '<figure class="poster' + (i === slide ? ' on' : '') + '"><img alt="" src="' + x.poster + '"><figcaption>' + esc(x.title) + '</figcaption></figure>'; }).join('');
+    } else {
+      for (var i = 0; i < box.children.length; i++) box.children[i].classList.toggle('on', i === slide);
+    }
+    document.getElementById('s-title').textContent = s.title;
+    document.getElementById('s-meta').innerHTML = '<span>' + s.kind + '</span><span>' + s.year + '</span>' + (s.rating ? '<span class="star">★ ' + s.rating + '</span>' : '');
+    document.getElementById('cta').textContent = 'Open in ' + app(order[focus]).name;
+    document.getElementById('shelf-hp').textContent = 'HP ' + (s.rating ? Math.round(parseFloat(s.rating) * 10) : 50);
+    document.getElementById('dots').innerHTML = slides.map(function (_, i) { return '<i class="' + (i === slide ? 'on' : '') + '"></i>'; }).join('');
+    clearTimeout(slideTimer);
+    slideTimer = setTimeout(function () { slide = (slide + 1) % slides.length; showSlide(); }, SLIDE_MS);
+  }
+  function stepSlide(d) { if (!slides.length) return; tick(); slide = (slide + d + slides.length) % slides.length; showSlide(); }
+
+  // ---- Settings sheet
+  var sheet = document.getElementById('sheet'), keyIn = document.getElementById('tmdb-key'), regIn = document.getElementById('region');
+  var feedIn = document.getElementById('feed'), symIn = document.getElementById('symbols');
+  function openSheet() { keyIn.value = tmdbKey(); regIn.value = region(); feedIn.value = load('hush.feed') || ''; symIn.value = load('hush.symbols') || ''; document.body.classList.add('settings'); zone = 'sheet'; keyIn.focus(); }
+  function closeSheet(saveIt) {
+    if (saveIt) { save('hush.tmdb', keyIn.value.trim()); save('hush.region', regIn.value.trim().toUpperCase() || 'IL'); save('hush.feed', feedIn.value.trim()); save('hush.symbols', symIn.value.trim()); listCache = {}; panelCache = {}; }
+    document.body.classList.remove('settings'); zone = 'grid'; keyIn.blur(); regIn.blur(); setFocus(focus, 0, 0);
+  }
+  sheet.addEventListener('submit', function (e) { e.preventDefault(); closeSheet(true); });
+
+  function press(el) { el.classList.add('pressed'); setTimeout(function () { el.classList.remove('pressed'); }, 120); }
+
+  function a0(id) { return app(id); }
+  function open(id, item) {
+    if (a0(id).panel) { panelCache = {}; return showPanel(a0(id)); }
+    if (id === 'settings') return TV.settings(function (ok, why) {
+      if (ok) return;
+      hint.textContent = 'TV settings: ' + (why || 'not available here') + ' — opening Hush settings'; hint.style.opacity = 1;
+      setTimeout(function () { hint.style.opacity = ''; hint.textContent = ''; openSheet(); }, why ? 4000 : 0);
+    });
+    chime();
+    var a = app(id);
+    hint.textContent = 'Opening ' + a.name + (item ? ' · ' + item.title : '') + '…'; hint.style.opacity = 1;
+    TV.launch(a, function (ok) {
+      if (!ok) hint.textContent = a.name + ' is not installed on this TV';
+      setTimeout(function () { hint.style.opacity = ''; hint.textContent = ''; }, ok ? 1200 : 2500);
+    });
+  }
+
+  function bump() {
+    if (onTv && document.body.classList.contains('idle')) { video.pause(); video.removeAttribute('src'); video.load(); }
+    document.body.classList.remove('idle');
+    clearTimeout(idleTimer);
+    clearTimeout(wildTimer);
+    idleTimer = setTimeout(function () {
+      document.body.classList.add('idle');
+      showWild();
+    }, IDLE_MS);
+  }
+
+  var BACK = { 27: 1, 8: 1, 10009: 1, 461: 1 }; // Esc / Backspace / Tizen Return / webOS Back
+  document.addEventListener('keydown', function (e) {
+    var k = e.keyCode;
+    if (document.body.classList.contains('idle')) { e.preventDefault(); bump(); return; }
+    if (zone === 'sheet') {
+      if (BACK[k]) { e.preventDefault(); closeSheet(false); }
+      else if (k === 40 || k === 38) {
+        var fields = [keyIn, regIn, feedIn, symIn], at = fields.indexOf(document.activeElement);
+        var to = fields[Math.max(0, Math.min(fields.length - 1, at + (k === 40 ? 1 : -1)))];
+        if (to) { e.preventDefault(); to.focus(); }
+      }
+      bump(); return;
+    }
+    if (zone === 'pills') {
+      e.preventDefault();
+      if (k === 37) { setPill(pillFocus - 1); tick(); } else if (k === 39) { setPill(pillFocus + 1); tick(); }
+      else if (k === 40 || BACK[k]) { leavePills(); if (slides.length && k === 40) { zone = 'shelf'; document.body.classList.add('zone-shelf'); rows.querySelectorAll('.icon').forEach(function (el) { el.classList.remove('is-focused', 'sway'); }); } }
+      else if (k === 13) { tick(); pillAction(pills[pillFocus].getAttribute('data-act')); }
+      bump(); return;
+    }
+    if (zone === 'shelf') {
+      e.preventDefault();
+      if (k === 38) { enterPills(); bump(); return; }
+      if (k === 37) stepSlide(-1); else if (k === 39) stepSlide(1);
+      else if (k === 40 || BACK[k]) { zone = 'grid'; document.body.classList.remove('zone-shelf'); setFocus(focus, 0, 0); }
+      else if (k === 13) { press(document.getElementById('slides')); open(order[focus], slides[slide]); }
+      bump(); return;
+    }
+    if (k === 38 && focus < PER_ROW && !slides.length) { e.preventDefault(); enterPills(); bump(); return; }
+    if (k === 38 && focus < PER_ROW && slides.length) { // Up from the dock enters the shelf
+      e.preventDefault(); zone = 'shelf'; document.body.classList.add('zone-shelf'); clearTimeout(swayTimer);
+      rows.querySelectorAll('.icon').forEach(function (el) { el.classList.remove('is-focused', 'sway'); });
+      bump(); return;
+    }
+    if (BACK[k]) {
+      e.preventDefault();
+      if (arranging) { arranging = false; document.body.classList.remove('arranging'); hint.textContent = ''; }
+      else if (focus !== 0) setFocus(0, 0, 0);
+      return;
+    }
+    if (k === 37) move(-1, 0); else if (k === 39) move(1, 0);
+    else if (k === 38) move(0, -1); else if (k === 40) move(0, 1);
+    else if (k === 13 && !e.repeat) {
+      held = false;
+      press(rows.querySelectorAll('.icon')[focus]);
+      holdTimer = setTimeout(function () {
+        held = true; arranging = true; document.body.classList.add('arranging');
+        hint.textContent = 'Move with the arrows · Back when done';
+      }, HOLD_MS);
+    }
+    bump();
+  });
+  document.addEventListener('keyup', function (e) {
+    if (e.keyCode !== 13 || zone !== 'grid') return;
+    clearTimeout(holdTimer);
+    if (!held && !arranging) open(order[focus]);
+  });
+  document.addEventListener('mousemove', bump);
+
+  function fit() {
+    var s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    document.getElementById('stage').style.setProperty('--scale', s);
+  }
+  window.addEventListener('resize', fit); fit();
+
+  function clockTick() {
+    var n = new Date(), t = n.getHours() + ':' + ('0' + n.getMinutes()).slice(-2);
+    var d = n.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    document.getElementById('clock').textContent = t;
+    document.getElementById('time').textContent = t; document.getElementById('cp-time').textContent = t;
+    document.getElementById('date').textContent = d; document.getElementById('cp-date').textContent = d;
+    document.getElementById('greet').textContent = greeting() + ', Trainer';
+  }
+  clockTick(); setInterval(clockTick, 10000);
+  setMuted(muted);
+  render();
+  TV.installed(adoptInstalled);
+  TV.sources(adoptSources);
+  // no aerials here: the screensaver is the tall grass
+  if (/idle/.test(location.hash)) { document.body.classList.add('idle'); showWild(); }
+
+  console.assert(order.length === APPS.length, 'order covers every app');
+  console.assert(rows.querySelectorAll('.row').length === Math.ceil(APPS.length / PER_ROW), 'rows match the grid');
+})();
+</script>
+</body>
+</html>
