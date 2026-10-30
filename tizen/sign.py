@@ -48,6 +48,13 @@ ROLE = {'AuthorSignature': 'author', 'DistributorSignature': 'distributor'}
 SIGNATURE_FILE = re.compile(r'^(author-signature|signature\d+)\.xml$')
 
 
+def not_after(cert):
+    """The certificate's expiry as an aware datetime, on old and new `cryptography` alike."""
+    if hasattr(cert, 'not_valid_after_utc'):
+        return cert.not_valid_after_utc
+    return cert.not_valid_after.replace(tzinfo=datetime.timezone.utc)
+
+
 def wrap(b64):
     return '\n'.join(b64[i:i + 76] for i in range(0, len(b64), 76))
 
@@ -79,14 +86,14 @@ def author_certificate(ca_cert, ca_key):
     if os.path.exists(key_path) and os.path.exists(cert_path):
         key = serialization.load_pem_private_key(open(key_path, 'rb').read(), None)
         cert = x509.load_pem_x509_certificate(open(cert_path, 'rb').read())
-        if cert.not_valid_after_utc > datetime.datetime.now(datetime.timezone.utc):
+        if not_after(cert) > datetime.datetime.now(datetime.timezone.utc):
             return key, [cert, ca_cert]
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     now = datetime.datetime.now(datetime.timezone.utc)
     subject = x509.Name([x509.NameAttribute(NameOID.ORGANIZATION_NAME, 'Hush'), x509.NameAttribute(NameOID.COMMON_NAME, 'Hush')])
     cert = (x509.CertificateBuilder().subject_name(subject).issuer_name(ca_cert.subject).public_key(key.public_key())
             .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))
-            .not_valid_after(ca_cert.not_valid_after_utc).sign(ca_key, hashes.SHA256()))
+            .not_valid_after(not_after(ca_cert)).sign(ca_key, hashes.SHA256()))
     with open(key_path, 'wb') as f:
         f.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
     os.chmod(key_path, 0o600)

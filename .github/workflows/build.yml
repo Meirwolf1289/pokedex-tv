@@ -15,7 +15,7 @@ jobs:
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" >/dev/null
       - name: Samsung (.wgt, signed with the Tizen SDK public test certificate), LG (.ipk), Android (.apk)
         run: |
-          pip install --quiet cryptography lxml
+          pip install --quiet --upgrade cryptography lxml
           python3 tizen/build.py && python3 tizen/sign.py
           python3 webos/build.py
           bash android/build.sh
